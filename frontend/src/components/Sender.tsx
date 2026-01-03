@@ -4,6 +4,8 @@ export const Sender = () => {
     const [socket, setSocket] = useState<WebSocket | null>(null);
     const [pc, setPC] = useState<RTCPeerConnection | null>(null);
 
+   const pcs = new Map<string, RTCPeerConnection>();
+
     useEffect(() => {
         const socket = new WebSocket('ws://localhost:8080');
         setSocket(socket);
