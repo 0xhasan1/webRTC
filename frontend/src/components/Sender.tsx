@@ -9,7 +9,7 @@ export const Sender = () => {
   useEffect(() => {
     const socket = new WebSocket("ws://localhost:8080");
     setSocket(socket);
-    console.log("Sender");
+    console.log("Sender socket ::", socket);
     socket.onopen = () => {
       socket.send(
         JSON.stringify({
@@ -25,29 +25,45 @@ export const Sender = () => {
       return;
     }
 
+    const pc = new RTCPeerConnection();
+    setPC(pc);
+
+    console.log("initiareConn::");
+
     socket.onmessage = async (event) => {
+      console.log("on message : ", event);
       const message = JSON.parse(event.data);
       if (message.type === "createAnswer") {
+        console.log("createAnswer");
         await pc.setRemoteDescription(message.sdp);
       } else if (message.type === "iceCandidate") {
+        console.log("iceCandidate");
+
         pc.addIceCandidate(message.candidate);
+      } else {
+        console.log("otherwise");
       }
     };
 
-    const pc = new RTCPeerConnection();
-    setPC(pc);
     pc.onicecandidate = (event) => {
+      console.log("on ice candidate : ", event);
+
       if (event.candidate) {
+        console.log("event.candidate");
         socket?.send(
           JSON.stringify({
             type: "iceCandidate",
             candidate: event.candidate,
           })
         );
+      } else {
+        console.log("event.candidate not found");
       }
     };
 
     pc.onnegotiationneeded = async () => {
+      console.log("on negotiationneeded : ");
+
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       socket?.send(
@@ -62,11 +78,9 @@ export const Sender = () => {
   };
 
   const getCameraStreamAndSend = (pc: RTCPeerConnection) => {
+    console.log("getCameraStreamAndSend ::");
     navigator.mediaDevices.getUserMedia({ video: true }).then((stream) => {
       const video = document.createElement("video");
-      video.srcObject = stream;
-      video.play();
-      // this is wrong, should propogate via a component
       document.body.appendChild(video);
       stream.getTracks().forEach((track) => {
         pc?.addTrack(track);
