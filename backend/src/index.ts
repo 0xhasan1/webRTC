@@ -17,6 +17,10 @@ wss.on("connection", function connection(ws) {
     } else if (message.type === "receiver") {
       console.log("receiver added");
       receiverSocket = ws;
+      if (senderSocket && senderSocket.readyState === WebSocket.OPEN) {
+        console.log("Notifying sender about new receiver");
+        senderSocket.send(JSON.stringify({ type: "receiverConnected" }));
+      }
     } else if (message.type === "createOffer") {
       if (ws !== senderSocket) {
         return;
@@ -44,6 +48,16 @@ wss.on("connection", function connection(ws) {
           JSON.stringify({ type: "iceCandidate", candidate: message.candidate })
         );
       }
+    }
+  });
+
+  ws.on("close", () => {
+    if (ws === senderSocket) {
+      console.log("Sender disconnected");
+      senderSocket = null;
+    } else if (ws === receiverSocket) {
+      console.log("Receiver disconnected");
+      receiverSocket = null;
     }
   });
 });

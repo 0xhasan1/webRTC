@@ -34,7 +34,10 @@ export const Sender = () => {
       console.log("Received message:", event.data);
       const message = JSON.parse(event.data);
 
-      if (message.type === "createAnswer") {
+      if (message.type === "receiverConnected") {
+        console.log("New receiver connected, reinitiating connection");
+        await initiateConn();
+      } else if (message.type === "createAnswer") {
         console.log("Received answer");
         await pc.setRemoteDescription(message.sdp);
       } else if (message.type === "iceCandidate") {
