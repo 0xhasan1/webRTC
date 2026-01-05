@@ -4,13 +4,13 @@ const wss = new WebSocketServer({ port: 8080 });
 
 let senderSocket: null | WebSocket = null;
 let receiverSocket: null | WebSocket = null;
-const clients = new Set<WebSocket>();
 
 wss.on("connection", function connection(ws) {
   ws.on("error", console.error);
 
   ws.on("message", function message(data: any) {
     const message = JSON.parse(data);
+
     if (message.type === "sender") {
       console.log("sender added");
       senderSocket = ws;
