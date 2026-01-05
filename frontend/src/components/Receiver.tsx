@@ -6,8 +6,21 @@ export const Receiver = () => {
   const socketRef = useRef<WebSocket | null>(null);
   const pendingCandidatesRef = useRef<RTCIceCandidate[]>([]);
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const roomId = new URLSearchParams(window.location.search).get("roomId");
 
   useEffect(() => {
+    console.log("first use effect 1::");
+
+    if (!roomId) {
+      console.error("Missing roomId");
+      return;
+    }
+
+    if (pcRef.current || socketRef.current) {
+      console.log("Already initialized, skipping");
+      return;
+    }
+
     const socket = new WebSocket("ws://localhost:8080");
     socketRef.current = socket;
 
@@ -15,75 +28,61 @@ export const Receiver = () => {
     pcRef.current = pc;
 
     pc.ontrack = (event) => {
-      console.log("Received track:", event.track.kind);
-      console.log("Setting stream:", event.streams[0]);
+      console.log("pc.ontrack", event);
       setStream(event.streams[0]);
     };
 
     pc.onicecandidate = (event) => {
+      console.log("pc.onicecandidate", event);
       if (event.candidate) {
         socket.send(
           JSON.stringify({
             type: "iceCandidate",
             candidate: event.candidate,
+            roomId,
           })
         );
-      } else {
-        console.log("ICE gathering complete");
       }
     };
 
-    pc.onconnectionstatechange = () => {
-      console.log("Connection state:", pc.connectionState);
-    };
-
-    pc.oniceconnectionstatechange = () => {
-      console.log("ICE connection state:", pc.iceConnectionState);
-    };
-
     socket.onopen = () => {
-      console.log("Socket connected");
-      socket.send(JSON.stringify({ type: "receiver" }));
+      console.log("socket.onopen");
+      socket.send(
+        JSON.stringify({
+          type: "receiver",
+          roomId,
+        })
+      );
     };
 
     socket.onmessage = async (event) => {
       const message = JSON.parse(event.data);
+      console.log("socket.onmessage", message);
 
       if (message.type === "createOffer") {
-        console.log("Received offer");
+        await pc.setRemoteDescription(message.sdp);
 
-        try {
-          await pc.setRemoteDescription(message.sdp);
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
 
-          socket.send(
-            JSON.stringify({
-              type: "createAnswer",
-              sdp: answer,
-            })
-          );
+        socket.send(
+          JSON.stringify({
+            type: "createAnswer",
+            sdp: answer,
+            roomId,
+          })
+        );
 
-          console.log(
-            "Adding pending candidates:",
-            pendingCandidatesRef.current.length
-          );
-          for (const c of pendingCandidatesRef.current) {
-            await pc.addIceCandidate(c);
-          }
-          pendingCandidatesRef.current = [];
-        } catch (error) {
-          console.error("Error handling offer:", error);
+        for (const c of pendingCandidatesRef.current) {
+          await pc.addIceCandidate(c);
         }
-      } else if (message.type === "iceCandidate") {
-        const candidate = new RTCIceCandidate(message.candidate);
+        pendingCandidatesRef.current = [];
+      }
 
+      if (message.type === "iceCandidate") {
+        const candidate = new RTCIceCandidate(message.candidate);
         if (pc.remoteDescription) {
-          try {
-            await pc.addIceCandidate(candidate);
-          } catch (error) {
-            console.error("Error adding ICE candidate:", error);
-          }
+          await pc.addIceCandidate(candidate);
         } else {
           pendingCandidatesRef.current.push(candidate);
         }
@@ -91,13 +90,15 @@ export const Receiver = () => {
     };
 
     return () => {
-      console.log("Cleaning up");
       pc.close();
       socket.close();
+      pcRef.current = null;
+      socketRef.current = null;
     };
-  }, []);
+  }, [roomId]);
 
   useEffect(() => {
+    console.log("second use effect 2::");
     if (videoRef.current && stream) {
       console.log("Attaching stream to video element");
       videoRef.current.srcObject = stream;

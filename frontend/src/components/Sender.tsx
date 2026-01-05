@@ -1,20 +1,84 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export const Sender = () => {
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [pc, setPC] = useState<RTCPeerConnection | null>(null);
+  const roomIdRef = useRef<string | null>(null);
+  const initializedRef = useRef(false);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
 
   useEffect(() => {
-    const socket = new WebSocket("ws://localhost:8080");
-    setSocket(socket);
+    let ws: WebSocket | null = null;
 
-    socket.onopen = () => {
-      console.log("Socket connected");
-      socket.send(JSON.stringify({ type: "sender" }));
-    };
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+    async function setup() {
+      const res = await fetch("http://localhost:8080/rooms", {
+        method: "POST",
+      });
+
+      const { roomId } = await res.json();
+      roomIdRef.current = roomId;
+      console.log("Room created:", roomId);
+
+      ws = new WebSocket("ws://localhost:8080");
+      setSocket(ws);
+
+      ws.onmessage = async (event) => {
+        console.log("Received message:", event.data);
+        const message = JSON.parse(event.data);
+
+        if (message.type === "receiverConnected") {
+          console.log("Receiver joined — creating offer");
+
+          if (!pcRef.current) {
+            console.error("Peer connection not initialized");
+            return;
+          }
+
+          const offer = await pcRef.current.createOffer();
+          await pcRef.current.setLocalDescription(offer);
+          if (ws) {
+            ws.send(
+              JSON.stringify({
+                type: "createOffer",
+                sdp: pcRef.current.localDescription,
+                roomId: roomIdRef.current,
+              })
+            );
+          }
+          console.log("New receiver connected, reinitiating connection");
+          //await initiateConn();
+        } else if (message.type === "createAnswer") {
+          console.log("Received answer");
+          await pcRef.current!.setRemoteDescription(message.sdp);
+          // await pc.setRemoteDescription(message.sdp);
+        } else if (message.type === "iceCandidate") {
+          console.log("Received ICE candidate");
+          await pcRef.current!.addIceCandidate(
+            new RTCIceCandidate(message.candidate)
+          );
+        } else {
+          console.log("something went wrong :: pc::", pcRef.current);
+        }
+      };
+
+      ws.onopen = () => {
+        console.log("Socket connected");
+
+        ws!.send(
+          JSON.stringify({
+            type: "sender",
+            roomId: roomIdRef.current,
+          })
+        );
+      };
+    }
+
+    setup();
 
     return () => {
-      socket.close();
+      ws?.close();
     };
   }, []);
 
@@ -25,26 +89,42 @@ export const Sender = () => {
     }
 
     const pc = new RTCPeerConnection();
+    pcRef.current = pc;
     setPC(pc);
 
     console.log("Initiating connection");
 
-    // Set up message handler
-    socket.onmessage = async (event) => {
-      console.log("Received message:", event.data);
-      const message = JSON.parse(event.data);
+    // socket.onmessage = async (event) => {
+    //   console.log("Received message:", event.data);
+    //   const message = JSON.parse(event.data);
 
-      if (message.type === "receiverConnected") {
-        console.log("New receiver connected, reinitiating connection");
-        await initiateConn();
-      } else if (message.type === "createAnswer") {
-        console.log("Received answer");
-        await pc.setRemoteDescription(message.sdp);
-      } else if (message.type === "iceCandidate") {
-        console.log("Received ICE candidate");
-        await pc.addIceCandidate(new RTCIceCandidate(message.candidate));
-      }
-    };
+    //   if (message.type === "receiverConnected") {
+    //     console.log("Receiver joined — creating offer");
+
+    //     const offer = await pc.createOffer();
+    //     await pc.setLocalDescription(offer);
+    //     socket.send(
+    //       JSON.stringify({
+    //         type: "createOffer",
+    //         sdp: pc.localDescription,
+    //         roomId: roomIdRef.current,
+    //       })
+    //     );
+    //     console.log("New receiver connected, reinitiating connection");
+    //     //await initiateConn();
+    //   } else if (message.type === "createAnswer") {
+    //     console.log("Received answer");
+    //     await pcRef.current!.setRemoteDescription(message.sdp);
+    //     // await pc.setRemoteDescription(message.sdp);
+    //   } else if (message.type === "iceCandidate") {
+    //     console.log("Received ICE candidate");
+    //     await pcRef.current!.addIceCandidate(
+    //       new RTCIceCandidate(message.candidate)
+    //     );
+    //   } else {
+    //     console.log("something went wrong :: pc::", pc);
+    //   }
+    // };
 
     pc.onicecandidate = (event) => {
       console.log("ICE candidate event:", event.candidate);
@@ -54,6 +134,7 @@ export const Sender = () => {
           JSON.stringify({
             type: "iceCandidate",
             candidate: event.candidate,
+            roomId: roomIdRef.current,
           })
         );
       } else {
@@ -69,23 +150,24 @@ export const Sender = () => {
       console.log("ICE connection state:", pc.iceConnectionState);
     };
 
-    pc.onnegotiationneeded = async () => {
-      console.log("Negotiation needed");
+    // pc.onnegotiationneeded = async () => {
+    //   console.log("Negotiation needed");
 
-      try {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
+    //   try {
+    //     const offer = await pc.createOffer();
+    //     await pc.setLocalDescription(offer);
 
-        socket.send(
-          JSON.stringify({
-            type: "createOffer",
-            sdp: pc.localDescription,
-          })
-        );
-      } catch (error) {
-        console.error("Error during negotiation:", error);
-      }
-    };
+    //     socket.send(
+    //       JSON.stringify({
+    //         type: "createOffer",
+    //         sdp: pc.localDescription,
+    //         roomId: roomIdRef.current,
+    //       })
+    //     );
+    //   } catch (error) {
+    //     console.error("Error during negotiation:", error);
+    //   }
+    // };
 
     getCameraStreamAndSend(pc);
   };
