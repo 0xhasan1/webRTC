@@ -5,7 +5,6 @@ export const Sender = () => {
   const roomIdRef = useRef<string | null>(null);
   const initializedRef = useRef(false);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  // Map to store peer connections: key is receiverId, value is RTCPeerConnection
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
 
   useEffect(() => {
@@ -41,18 +40,15 @@ export const Sender = () => {
             receiverId
           );
 
-          // Create a new peer connection for this receiver
           const pc = new RTCPeerConnection();
           peerConnectionsRef.current.set(receiverId, pc);
 
-          // Add media tracks if stream is already available
           if (mediaStreamRef.current) {
             mediaStreamRef.current.getTracks().forEach((track) => {
               pc.addTrack(track, mediaStreamRef.current!);
             });
           }
 
-          // Set up ICE candidate handler
           pc.onicecandidate = (event) => {
             if (event.candidate && ws) {
               ws.send(
@@ -81,7 +77,6 @@ export const Sender = () => {
             );
           };
 
-          // Create offer for this receiver
           try {
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
@@ -153,14 +148,12 @@ export const Sender = () => {
 
     return () => {
       ws?.close();
-      // Clean up all peer connections
       for (const [receiverId, pc] of peerConnectionsRef.current.entries()) {
         pc.close();
         console.log(`Closed peer connection for receiver ${receiverId}`);
       }
       peerConnectionsRef.current.clear();
 
-      // Stop media stream tracks
       if (mediaStreamRef.current) {
         mediaStreamRef.current.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
@@ -194,11 +187,9 @@ export const Sender = () => {
 
       console.log("Camera stream ready. Waiting for receivers to connect...");
 
-      // Add tracks to existing peer connections (if any receivers already connected)
       for (const [receiverId, pc] of peerConnectionsRef.current.entries()) {
         stream.getTracks().forEach((track) => {
           if (pc.getSenders().find((sender) => sender.track === track)) {
-            // Track already added, skip
             return;
           }
           pc.addTrack(track, stream);

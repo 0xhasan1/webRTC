@@ -4,7 +4,6 @@ import { createServer } from "http";
 import { WebSocket, WebSocketServer } from "ws";
 import cors from "cors";
 
-// Create Express app
 const app = express();
 
 app.use(
@@ -21,13 +20,12 @@ const wss = new WebSocketServer({ server });
 
 type Room = {
   sender: WebSocket | null;
-  receivers: Map<string, WebSocket>; // Map receiverId to WebSocket
+  receivers: Map<string, WebSocket>;
   createdAt: number;
 };
 
 const rooms = new Map<string, Room>();
 
-// Generate room ID function
 function generateMeetStyleId(length: number = 10): string {
   const array = new Uint8Array(length);
   crypto.getRandomValues(array);
@@ -47,75 +45,6 @@ app.post("/rooms", (req, res) => {
 
   res.json({ roomId });
 });
-
-// let senderSocket: null | WebSocket = null;
-// let receiverSocket: null | WebSocket = null;
-
-// wss.on("connection", function connection(ws) {
-//   ws.on("error", console.error);
-
-//   ws.on("message", function message(data: any) {
-//     const message = JSON.parse(data);
-
-//     const room = rooms.get(message.roomId);
-
-//     if (!room) {
-//       ws.send(JSON.stringify({ error: "Invalid Room" }));
-//       return;
-//     }
-
-//     if (message.type === "sender") {
-//       console.log("sender added");
-//       // senderSocket = ws;
-//       room.sender = ws;
-//     } else if (message.type === "receiver") {
-//       console.log("receiver added");
-//       // receiverSocket = ws;
-//       room.receivers.add(ws);
-//       if (room.sender && room.sender.readyState === WebSocket.OPEN) {
-//         console.log("Notifying sender about new receiver");
-//         room.sender.send(JSON.stringify({ type: "receiverConnected" }));
-//       }
-//     } else if (message.type === "createOffer") {
-//       if (ws !== room.sender) {
-//         return;
-//       }
-//       console.log("sending offer");
-//       receiverSocket?.send(
-//         JSON.stringify({ type: "createOffer", sdp: message.sdp })
-//       );
-//     } else if (message.type === "createAnswer") {
-//       if (ws !== receiverSocket) {
-//         return;
-//       }
-//       console.log("sending answer");
-//       room.sender?.send(
-//         JSON.stringify({ type: "createAnswer", sdp: message.sdp })
-//       );
-//     } else if (message.type === "iceCandidate") {
-//       console.log("sending ice candidate");
-//       if (ws === room.sender) {
-//         receiverSocket?.send(
-//           JSON.stringify({ type: "iceCandidate", candidate: message.candidate })
-//         );
-//       } else if (ws === receiverSocket) {
-//         room.sender?.send(
-//           JSON.stringify({ type: "iceCandidate", candidate: message.candidate })
-//         );
-//       }
-//     }
-//   });
-
-//   ws.on("close", () => {
-//     if (ws === room.send) {
-//       console.log("Sender disconnected");
-//       senderSocket = null;
-//     } else if (ws === receiverSocket) {
-//       console.log("Receiver disconnected");
-//       receiverSocket = null;
-//     }
-//   });
-// });
 
 wss.on("connection", function connection(ws) {
   ws.on("error", console.error);
@@ -137,12 +66,10 @@ wss.on("connection", function connection(ws) {
     }
 
     if (type === "receiver") {
-      // Generate a unique receiver ID
       const receiverId = generateMeetStyleId(8);
       console.log("Receiver joined room:", roomId, "with ID:", receiverId);
       room.receivers.set(receiverId, ws);
 
-      // Store receiverId on the WebSocket for later lookup
       (ws as any).receiverId = receiverId;
 
       room.sender?.send(
@@ -196,7 +123,6 @@ wss.on("connection", function connection(ws) {
 
     if (type === "iceCandidate") {
       if (ws === room.sender) {
-        // Sender ICE → specific receiver
         const { receiverId } = message;
         if (receiverId) {
           const receiver = room.receivers.get(receiverId);
@@ -209,7 +135,6 @@ wss.on("connection", function connection(ws) {
             );
           }
         } else {
-          // Broadcast to all if no receiverId specified (backward compatibility)
           room.receivers.forEach((receiver) => {
             receiver.send(
               JSON.stringify({
@@ -220,7 +145,6 @@ wss.on("connection", function connection(ws) {
           });
         }
       } else {
-        // Receiver ICE → sender
         const receiverId = (ws as any).receiverId;
         if (receiverId && room.receivers.has(receiverId)) {
           room.sender?.send(
@@ -248,7 +172,6 @@ wss.on("connection", function connection(ws) {
         room.receivers.delete(receiverId);
       }
 
-      // Delete empty room
       if (!room.sender && room.receivers.size === 0) {
         console.log("Deleting empty room:", roomId);
         rooms.delete(roomId);
@@ -257,7 +180,6 @@ wss.on("connection", function connection(ws) {
   });
 });
 
-// Start the server
 server.listen(8080, () => {
   console.log("Server started at http://localhost:8080");
   console.log("WebSocket server ready");
