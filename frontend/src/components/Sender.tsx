@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "react";
 
 export const Sender = () => {
   const [socket, setSocket] = useState<WebSocket | null>(null);
-  const [pc, setPC] = useState<RTCPeerConnection | null>(null);
   const roomIdRef = useRef<string | null>(null);
   const initializedRef = useRef(false);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  // Map to store peer connections: key is receiverId, value is RTCPeerConnection
+  const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -29,37 +30,110 @@ export const Sender = () => {
         const message = JSON.parse(event.data);
 
         if (message.type === "receiverConnected") {
-          console.log("Receiver joined — creating offer");
-
-          if (!pcRef.current) {
-            console.error("Peer connection not initialized");
+          const receiverId = message.receiverId;
+          if (!receiverId) {
+            console.error("receiverConnected missing receiverId");
             return;
           }
 
-          const offer = await pcRef.current.createOffer();
-          await pcRef.current.setLocalDescription(offer);
-          if (ws) {
-            ws.send(
-              JSON.stringify({
-                type: "createOffer",
-                sdp: pcRef.current.localDescription,
-                roomId: roomIdRef.current,
-              })
+          console.log(
+            "Receiver joined — creating new peer connection for:",
+            receiverId
+          );
+
+          // Create a new peer connection for this receiver
+          const pc = new RTCPeerConnection();
+          peerConnectionsRef.current.set(receiverId, pc);
+
+          // Add media tracks if stream is already available
+          if (mediaStreamRef.current) {
+            mediaStreamRef.current.getTracks().forEach((track) => {
+              pc.addTrack(track, mediaStreamRef.current!);
+            });
+          }
+
+          // Set up ICE candidate handler
+          pc.onicecandidate = (event) => {
+            if (event.candidate && ws) {
+              ws.send(
+                JSON.stringify({
+                  type: "iceCandidate",
+                  candidate: event.candidate,
+                  roomId: roomIdRef.current,
+                  receiverId: receiverId,
+                })
+              );
+            }
+          };
+
+          // Set up connection state handlers
+          pc.onconnectionstatechange = () => {
+            console.log(
+              `Connection state for ${receiverId}:`,
+              pc.connectionState
+            );
+          };
+
+          pc.oniceconnectionstatechange = () => {
+            console.log(
+              `ICE connection state for ${receiverId}:`,
+              pc.iceConnectionState
+            );
+          };
+
+          // Create offer for this receiver
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+
+            if (ws) {
+              ws.send(
+                JSON.stringify({
+                  type: "createOffer",
+                  sdp: offer,
+                  roomId: roomIdRef.current,
+                  receiverId: receiverId,
+                })
+              );
+            }
+            console.log(`Created offer for receiver ${receiverId}`);
+          } catch (error) {
+            console.error("Error creating offer:", error);
+          }
+        } else if (message.type === "createAnswer") {
+          const receiverId = message.receiverId;
+          if (!receiverId) {
+            console.error("createAnswer missing receiverId");
+            return;
+          }
+
+          console.log("Received answer from receiver:", receiverId);
+
+          const pc = peerConnectionsRef.current.get(receiverId);
+
+          if (pc) {
+            await pc.setRemoteDescription(message.sdp);
+            console.log(`Answer processed for receiver ${receiverId}`);
+          } else {
+            console.error(
+              `No matching peer connection found for receiver ${receiverId}`
             );
           }
-          console.log("New receiver connected, reinitiating connection");
-          //await initiateConn();
-        } else if (message.type === "createAnswer") {
-          console.log("Received answer");
-          await pcRef.current!.setRemoteDescription(message.sdp);
-          // await pc.setRemoteDescription(message.sdp);
         } else if (message.type === "iceCandidate") {
-          console.log("Received ICE candidate");
-          await pcRef.current!.addIceCandidate(
-            new RTCIceCandidate(message.candidate)
-          );
+          const receiverId = message.receiverId;
+          if (!receiverId) {
+            console.error("iceCandidate missing receiverId");
+            return;
+          }
+
+          console.log("Received ICE candidate from receiver:", receiverId);
+
+          const pc = peerConnectionsRef.current.get(receiverId);
+          if (pc && pc.remoteDescription) {
+            await pc.addIceCandidate(new RTCIceCandidate(message.candidate));
+          }
         } else {
-          console.log("something went wrong :: pc::", pcRef.current);
+          console.log("Unknown message type:", message.type);
         }
       };
 
@@ -79,6 +153,18 @@ export const Sender = () => {
 
     return () => {
       ws?.close();
+      // Clean up all peer connections
+      for (const [receiverId, pc] of peerConnectionsRef.current.entries()) {
+        pc.close();
+        console.log(`Closed peer connection for receiver ${receiverId}`);
+      }
+      peerConnectionsRef.current.clear();
+
+      // Stop media stream tracks
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+      }
     };
   }, []);
 
@@ -88,91 +174,6 @@ export const Sender = () => {
       return;
     }
 
-    const pc = new RTCPeerConnection();
-    pcRef.current = pc;
-    setPC(pc);
-
-    console.log("Initiating connection");
-
-    // socket.onmessage = async (event) => {
-    //   console.log("Received message:", event.data);
-    //   const message = JSON.parse(event.data);
-
-    //   if (message.type === "receiverConnected") {
-    //     console.log("Receiver joined — creating offer");
-
-    //     const offer = await pc.createOffer();
-    //     await pc.setLocalDescription(offer);
-    //     socket.send(
-    //       JSON.stringify({
-    //         type: "createOffer",
-    //         sdp: pc.localDescription,
-    //         roomId: roomIdRef.current,
-    //       })
-    //     );
-    //     console.log("New receiver connected, reinitiating connection");
-    //     //await initiateConn();
-    //   } else if (message.type === "createAnswer") {
-    //     console.log("Received answer");
-    //     await pcRef.current!.setRemoteDescription(message.sdp);
-    //     // await pc.setRemoteDescription(message.sdp);
-    //   } else if (message.type === "iceCandidate") {
-    //     console.log("Received ICE candidate");
-    //     await pcRef.current!.addIceCandidate(
-    //       new RTCIceCandidate(message.candidate)
-    //     );
-    //   } else {
-    //     console.log("something went wrong :: pc::", pc);
-    //   }
-    // };
-
-    pc.onicecandidate = (event) => {
-      console.log("ICE candidate event:", event.candidate);
-
-      if (event.candidate) {
-        socket.send(
-          JSON.stringify({
-            type: "iceCandidate",
-            candidate: event.candidate,
-            roomId: roomIdRef.current,
-          })
-        );
-      } else {
-        console.log("ICE gathering complete");
-      }
-    };
-
-    pc.onconnectionstatechange = () => {
-      console.log("Connection state:", pc.connectionState);
-    };
-
-    pc.oniceconnectionstatechange = () => {
-      console.log("ICE connection state:", pc.iceConnectionState);
-    };
-
-    // pc.onnegotiationneeded = async () => {
-    //   console.log("Negotiation needed");
-
-    //   try {
-    //     const offer = await pc.createOffer();
-    //     await pc.setLocalDescription(offer);
-
-    //     socket.send(
-    //       JSON.stringify({
-    //         type: "createOffer",
-    //         sdp: pc.localDescription,
-    //         roomId: roomIdRef.current,
-    //       })
-    //     );
-    //   } catch (error) {
-    //     console.error("Error during negotiation:", error);
-    //   }
-    // };
-
-    getCameraStreamAndSend(pc);
-  };
-
-  const getCameraStreamAndSend = async (pc: RTCPeerConnection) => {
     console.log("Getting camera stream");
 
     try {
@@ -180,6 +181,8 @@ export const Sender = () => {
         video: true,
         audio: false,
       });
+
+      mediaStreamRef.current = stream;
 
       const video = document.createElement("video");
       video.autoplay = true;
@@ -189,12 +192,21 @@ export const Sender = () => {
       document.body.appendChild(video);
       video.srcObject = stream;
 
-      stream.getTracks().forEach((track) => {
-        console.log("Adding track:", track.kind);
-        pc.addTrack(track, stream);
-      });
+      console.log("Camera stream ready. Waiting for receivers to connect...");
 
-      console.log("Stream added to peer connection");
+      // Add tracks to existing peer connections (if any receivers already connected)
+      for (const [receiverId, pc] of peerConnectionsRef.current.entries()) {
+        stream.getTracks().forEach((track) => {
+          if (pc.getSenders().find((sender) => sender.track === track)) {
+            // Track already added, skip
+            return;
+          }
+          pc.addTrack(track, stream);
+          console.log(
+            `Added track to existing peer connection for receiver ${receiverId}`
+          );
+        });
+      }
     } catch (error) {
       console.error("Error accessing camera:", error);
     }

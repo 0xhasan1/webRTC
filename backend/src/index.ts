@@ -21,7 +21,7 @@ const wss = new WebSocketServer({ server });
 
 type Room = {
   sender: WebSocket | null;
-  receivers: Set<WebSocket>;
+  receivers: Map<string, WebSocket>; // Map receiverId to WebSocket
   createdAt: number;
 };
 
@@ -41,7 +41,7 @@ app.post("/rooms", (req, res) => {
 
   rooms.set(roomId, {
     sender: null,
-    receivers: new Set(),
+    receivers: new Map(),
     createdAt: Date.now(),
   });
 
@@ -137,12 +137,18 @@ wss.on("connection", function connection(ws) {
     }
 
     if (type === "receiver") {
-      console.log("Receiver joined room:", roomId);
-      room.receivers.add(ws);
+      // Generate a unique receiver ID
+      const receiverId = generateMeetStyleId(8);
+      console.log("Receiver joined room:", roomId, "with ID:", receiverId);
+      room.receivers.set(receiverId, ws);
+
+      // Store receiverId on the WebSocket for later lookup
+      (ws as any).receiverId = receiverId;
 
       room.sender?.send(
         JSON.stringify({
           type: "receiverConnected",
+          receiverId: receiverId,
         })
       );
       return;
@@ -150,27 +156,39 @@ wss.on("connection", function connection(ws) {
     if (type === "createOffer") {
       if (ws !== room.sender) return;
 
-      console.log("Forwarding offer to receivers");
+      const { receiverId } = message;
+      if (!receiverId) {
+        console.error("createOffer missing receiverId");
+        return;
+      }
 
-      room.receivers.forEach((receiver) => {
-        receiver.send(
-          JSON.stringify({
-            type: "createOffer",
-            sdp: message.sdp,
-          })
-        );
-      });
+      const receiver = room.receivers.get(receiverId);
+      if (!receiver) {
+        console.error("Receiver not found:", receiverId);
+        return;
+      }
+
+      console.log("Forwarding offer to receiver:", receiverId);
+
+      receiver.send(
+        JSON.stringify({
+          type: "createOffer",
+          sdp: message.sdp,
+        })
+      );
       return;
     }
     if (type === "createAnswer") {
-      if (!room.receivers.has(ws)) return;
+      const receiverId = (ws as any).receiverId;
+      if (!receiverId || !room.receivers.has(receiverId)) return;
 
-      console.log("Forwarding answer to sender");
+      console.log("Forwarding answer to sender from receiver:", receiverId);
 
       room.sender?.send(
         JSON.stringify({
           type: "createAnswer",
           sdp: message.sdp,
+          receiverId: receiverId,
         })
       );
       return;
@@ -178,23 +196,41 @@ wss.on("connection", function connection(ws) {
 
     if (type === "iceCandidate") {
       if (ws === room.sender) {
-        // Sender ICE → all receivers
-        room.receivers.forEach((receiver) => {
-          receiver.send(
+        // Sender ICE → specific receiver
+        const { receiverId } = message;
+        if (receiverId) {
+          const receiver = room.receivers.get(receiverId);
+          if (receiver) {
+            receiver.send(
+              JSON.stringify({
+                type: "iceCandidate",
+                candidate: message.candidate,
+              })
+            );
+          }
+        } else {
+          // Broadcast to all if no receiverId specified (backward compatibility)
+          room.receivers.forEach((receiver) => {
+            receiver.send(
+              JSON.stringify({
+                type: "iceCandidate",
+                candidate: message.candidate,
+              })
+            );
+          });
+        }
+      } else {
+        // Receiver ICE → sender
+        const receiverId = (ws as any).receiverId;
+        if (receiverId && room.receivers.has(receiverId)) {
+          room.sender?.send(
             JSON.stringify({
               type: "iceCandidate",
               candidate: message.candidate,
+              receiverId: receiverId,
             })
           );
-        });
-      } else if (room.receivers.has(ws)) {
-        // Receiver ICE → sender
-        room.sender?.send(
-          JSON.stringify({
-            type: "iceCandidate",
-            candidate: message.candidate,
-          })
-        );
+        }
       }
     }
   });
@@ -206,9 +242,10 @@ wss.on("connection", function connection(ws) {
         room.sender = null;
       }
 
-      if (room.receivers.has(ws)) {
-        console.log("Receiver left room:", roomId);
-        room.receivers.delete(ws);
+      const receiverId = (ws as any).receiverId;
+      if (receiverId && room.receivers.has(receiverId)) {
+        console.log("Receiver left room:", roomId, "receiverId:", receiverId);
+        room.receivers.delete(receiverId);
       }
 
       // Delete empty room
