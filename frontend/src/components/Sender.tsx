@@ -25,8 +25,8 @@ export const Sender = () => {
       setSocket(ws);
 
       ws.onmessage = async (event) => {
-        console.log("Received message:", event.data);
         const message = JSON.parse(event.data);
+        console.log("Received message:", message);
 
         if (message.type === "receiverConnected") {
           const receiverId = message.receiverId;
@@ -62,7 +62,6 @@ export const Sender = () => {
             }
           };
 
-          // Set up connection state handlers
           pc.onconnectionstatechange = () => {
             console.log(
               `Connection state for ${receiverId}:`,

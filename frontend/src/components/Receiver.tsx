@@ -115,7 +115,7 @@ export const Receiver = () => {
         muted
         style={{
           maxWidth: "500px",
-          border: "2px solid blue",
+          border: "2px solid black",
           display: "block",
         }}
       />

@@ -1,4 +1,3 @@
-import { error } from "console";
 import express from "express";
 import { createServer } from "http";
 import { WebSocket, WebSocketServer } from "ws";
@@ -133,6 +132,8 @@ wss.on("connection", function connection(ws) {
                 candidate: message.candidate,
               })
             );
+          } else {
+            console.error("No receiver found");
           }
         } else {
           room.receivers.forEach((receiver) => {
@@ -154,8 +155,12 @@ wss.on("connection", function connection(ws) {
               receiverId: receiverId,
             })
           );
+        } else {
+          console.error("No such receiver found in the room");
         }
       }
+    } else {
+      console.error(" No ICE found");
     }
   });
 
